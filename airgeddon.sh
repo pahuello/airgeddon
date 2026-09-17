@@ -297,6 +297,7 @@ hostapd_mana_log="ag.hostapd_mana.log"
 hostapd_mana_out="ag.hostapd_mana.hccapx"
 control_et_file="ag.et_control.sh"
 control_enterprise_file="ag.enterprise_control.sh"
+tmux_panes_helper_file="ag.tmux_panes.sh"
 enterprisedir="enterprise/"
 certsdir="certs/"
 certspass="airgeddon"
@@ -4741,6 +4742,8 @@ function set_wep_key_script() {
 
 	debug_print
 
+	set_tmux_panes_helper
+
 	exec 8>"${tmpdir}${wep_key_handler}"
 
 	cat >&8 <<-EOF
@@ -4868,6 +4871,14 @@ function set_wep_key_script() {
 		EOF
 	fi
 
+	if tmux_panes_active; then
+		cat >&8 <<-EOF
+			session_name="${session_name}"
+			tmux_main_window="${tmux_main_window}"
+			source "${tmpdir}${tmux_panes_helper_file}"
+		EOF
+	fi
+
 	cat >&8 <<-EOF
 		while true; do
 			sleep 1
@@ -4937,6 +4948,8 @@ function set_wep_key_script() {
 function set_wep_script() {
 
 	debug_print
+
+	set_tmux_panes_helper
 
 	current_mac=$(cat < "/sys/class/net/${interface}/address" 2> /dev/null)
 
@@ -5023,7 +5036,17 @@ function set_wep_script() {
 				tmux kill-window -t "${session_name}:\${1}" 2> /dev/null
 			fi
 		}
+	EOF
 
+	if tmux_panes_active; then
+		cat >&6 <<-EOF
+			session_name="${session_name}"
+			tmux_main_window="${tmux_main_window}"
+			source "${tmpdir}${tmux_panes_helper_file}"
+		EOF
+	fi
+
+	cat >&6 <<-EOF
 		iw dev "${interface}" set channel "${channel}" > /dev/null 2>&1
 		mkdir "${tmpdir}${wepdir}" > /dev/null 2>&1
 		#shellcheck disable=SC2164
@@ -12657,6 +12680,8 @@ function set_enterprise_control_script() {
 
 	debug_print
 
+	set_tmux_panes_helper
+
 	exec 7>"${tmpdir}${control_enterprise_file}"
 
 	local control_msg
@@ -12728,7 +12753,13 @@ function set_enterprise_control_script() {
 		}
 	EOF
 
-	if [ "${AIRGEDDON_WINDOWS_HANDLING}" = "tmux" ]; then
+	if tmux_panes_active; then
+		cat >&7 <<-EOF
+			session_name="${session_name}"
+			tmux_main_window="${tmux_main_window}"
+			source "${tmpdir}${tmux_panes_helper_file}"
+		EOF
+	elif [ "${AIRGEDDON_WINDOWS_HANDLING}" = "tmux" ]; then
 		cat >&7 <<-EOF
 			#Function to kill tmux windows using window name
 			function kill_tmux_windows() {
@@ -12920,6 +12951,8 @@ function set_et_control_script() {
 
 	debug_print
 
+	set_tmux_panes_helper
+
 	rm -rf "${tmpdir}${control_et_file}" > /dev/null 2>&1
 
 	exec 7>"${tmpdir}${control_et_file}"
@@ -12969,7 +13002,13 @@ function set_et_control_script() {
 			last_password_msg="${blue_color}${et_misc_texts[${language},21]}${normal_color}"
 	EOF
 
-	if [ "${AIRGEDDON_WINDOWS_HANDLING}" = "tmux" ]; then
+	if tmux_panes_active; then
+		cat >&7 <<-EOF
+			session_name="${session_name}"
+			tmux_main_window="${tmux_main_window}"
+			source "${tmpdir}${tmux_panes_helper_file}"
+		EOF
+	elif [ "${AIRGEDDON_WINDOWS_HANDLING}" = "tmux" ]; then
 		cat >&7 <<-EOF
 			#Function to kill tmux windows using window name
 			function kill_tmux_windows() {
@@ -17484,7 +17523,11 @@ function interruptible_capture_poll() {
 
 	kill "${poll_worker_pid}" &> /dev/null
 	if [ "${AIRGEDDON_WINDOWS_HANDLING}" = "tmux" ]; then
-		tmux kill-window -t "${session_name}:${poll_tmux_window}" 2> /dev/null
+		if tmux_panes_active; then
+			kill_tmux_pane_by_name "${poll_tmux_window}"
+		else
+			tmux kill-window -t "${session_name}:${poll_tmux_window}" 2> /dev/null
+		fi
 	fi
 }
 
@@ -19214,6 +19257,7 @@ function env_vars_initialization() {
 									"AIRGEDDON_DEVELOPMENT_MODE" #15
 									"AIRGEDDON_DEBUG_MODE" #16
 									"AIRGEDDON_WINDOWS_HANDLING" #17
+									"AIRGEDDON_TMUX_PANES" #18
 									)
 
 	declare -gA nonboolean_options_env_vars
@@ -19240,6 +19284,7 @@ function env_vars_initialization() {
 	boolean_options_env_vars["${ordered_options_env_vars[14]},default_value"]="true" #evil_twin_sounds
 	boolean_options_env_vars["${ordered_options_env_vars[15]},default_value"]="false" #development_mode
 	boolean_options_env_vars["${ordered_options_env_vars[16]},default_value"]="false" #debug_mode
+	boolean_options_env_vars["${ordered_options_env_vars[18]},default_value"]="true" #tmux_panes
 
 	boolean_options_env_vars["${ordered_options_env_vars[0]},rcfile_text"]="#Enabled true / Disabled false - Auto update feature (it has no effect on development mode) - Default value ${boolean_options_env_vars[${ordered_options_env_vars[0]},'default_value']}"
 	boolean_options_env_vars["${ordered_options_env_vars[1]},rcfile_text"]="#Enabled true / Disabled false - Skip intro (it has no effect on development mode) - Default value ${boolean_options_env_vars[${ordered_options_env_vars[1]},'default_value']}"
@@ -19257,6 +19302,7 @@ function env_vars_initialization() {
 	boolean_options_env_vars["${ordered_options_env_vars[14]},rcfile_text"]="#Enabled true / Disabled false - Enable sounds for Evil Twin attacks - Default value ${boolean_options_env_vars[${ordered_options_env_vars[14]},'default_value']}"
 	boolean_options_env_vars["${ordered_options_env_vars[15]},rcfile_text"]="#Enabled true / Disabled false - Development mode for faster development skipping intro and all initial checks - Default value ${boolean_options_env_vars[${ordered_options_env_vars[15]},'default_value']}"
 	boolean_options_env_vars["${ordered_options_env_vars[16]},rcfile_text"]="#Enabled true / Disabled false - Debug mode for development printing debug information - Default value ${boolean_options_env_vars[${ordered_options_env_vars[16]},'default_value']}"
+	boolean_options_env_vars["${ordered_options_env_vars[18]},rcfile_text"]="#Enabled true / Disabled false - On tmux window handling, launch utilities as panes inside the main window instead of separate windows - Default value ${boolean_options_env_vars[${ordered_options_env_vars[18]},'default_value']}"
 
 	readarray -t ENV_VARS_ELEMENTS < <(printf %s\\n "${!nonboolean_options_env_vars[@]} ${!boolean_options_env_vars[@]}" | cut -d, -f1 | sort -u)
 	readarray -t ENV_BOOLEAN_VARS_ELEMENTS < <(printf %s\\n "${!boolean_options_env_vars[@]}" | cut -d, -f1 | sort -u)
@@ -19533,6 +19579,11 @@ function start_airgeddon_from_tmux() {
 	debug_print
 
 	tmux rename-window -t "${session_name}" "${tmux_main_window}"
+	if tmux_panes_active; then
+		tmux setw -t "${session_name}:${tmux_main_window}" pane-border-format " #{pane_title} " 2> /dev/null
+		tmux select-pane -t "${session_name}:${tmux_main_window}" -T "${tmux_main_window}" 2> /dev/null
+		tmux set -p -t "${session_name}:${tmux_main_window}" @ag_name "${tmux_main_window}" 2> /dev/null
+	fi
 	tmux send-keys -t "${session_name}:${tmux_main_window}" "clear;cd ${scriptfolder};bash ${scriptname} \"true\" \"${airgeddon_uid}\"" ENTER
 	sleep 0.2
 	if [ "${1}" = "normal" ]; then
@@ -19560,7 +19611,146 @@ function create_tmux_session() {
 	fi
 }
 
-#Start supporting scripts inside its own tmux window
+#Check if utilities must be launched as tmux panes inside the main window instead of separate windows
+function tmux_panes_active() {
+
+	debug_print
+
+	[ "${AIRGEDDON_WINDOWS_HANDLING}" = "tmux" ] && "${AIRGEDDON_TMUX_PANES:-true}"
+}
+
+#Arrange the panes of the main tmux window using a layout based on the number of panes and keep the airgeddon menu pane focused
+function arrange_tmux_panes() {
+
+	debug_print
+
+	local pane_count
+	local main_pane_id
+	pane_count=$(tmux list-panes -t "${session_name}:${tmux_main_window}" 2> /dev/null | grep -c .)
+	if [ "${pane_count}" -gt 1 ]; then
+		tmux setw -t "${session_name}:${tmux_main_window}" pane-border-status top 2> /dev/null
+	else
+		tmux setw -t "${session_name}:${tmux_main_window}" pane-border-status off 2> /dev/null
+	fi
+	case "${pane_count}" in
+		1)
+			:
+		;;
+		2)
+			tmux select-layout -t "${session_name}:${tmux_main_window}" even-horizontal 2> /dev/null
+		;;
+		3)
+			tmux setw -t "${session_name}:${tmux_main_window}" main-pane-height 50% 2> /dev/null
+			tmux select-layout -t "${session_name}:${tmux_main_window}" main-horizontal 2> /dev/null
+		;;
+		*)
+			tmux select-layout -t "${session_name}:${tmux_main_window}" tiled 2> /dev/null
+		;;
+	esac
+	main_pane_id=$(tmux list-panes -t "${session_name}:${tmux_main_window}" -F '#{pane_id}|#{@ag_name}' 2> /dev/null | awk -F'|' -v mainname="${tmux_main_window}" '$2==mainname{print $1; exit}')
+	[ -n "${main_pane_id}" ] && tmux select-pane -t "${main_pane_id}" 2> /dev/null
+}
+
+#Kill a single tmux pane identified by its airgeddon name (pane user option) and rearrange the remaining panes
+function kill_tmux_pane_by_name() {
+
+	debug_print
+
+	local pane_id
+	local pane_agname
+	while IFS='|' read -r pane_id pane_agname; do
+		if [ "${pane_agname}" = "${1}" ]; then
+			tmux kill-pane -t "${pane_id}" 2> /dev/null
+		fi
+	done < <(tmux list-panes -t "${session_name}:${tmux_main_window}" -F '#{pane_id}|#{@ag_name}' 2> /dev/null)
+	arrange_tmux_panes
+}
+
+#Write the tmux panes helper script that generated (here-doc) scripts source to manage panes instead of windows
+function set_tmux_panes_helper() {
+
+	debug_print
+
+	if ! tmux_panes_active; then
+		return 0
+	fi
+
+	cat > "${tmpdir}${tmux_panes_helper_file}" <<-'AGEOF'
+		#!/usr/bin/env bash
+		#Auto-generated by airgeddon. Provides tmux pane handling reused by generated scripts.
+		#Requires session_name and tmux_main_window to be defined before sourcing.
+
+		function arrange_tmux_panes() {
+			local pane_count
+			local main_pane_id
+			pane_count=$(tmux list-panes -t "${session_name}:${tmux_main_window}" 2> /dev/null | grep -c .)
+			if [ "${pane_count}" -gt 1 ]; then
+				tmux setw -t "${session_name}:${tmux_main_window}" pane-border-status top 2> /dev/null
+			else
+				tmux setw -t "${session_name}:${tmux_main_window}" pane-border-status off 2> /dev/null
+			fi
+			case "${pane_count}" in
+				1) : ;;
+				2) tmux select-layout -t "${session_name}:${tmux_main_window}" even-horizontal 2> /dev/null ;;
+				3)
+					tmux setw -t "${session_name}:${tmux_main_window}" main-pane-height 50% 2> /dev/null
+					tmux select-layout -t "${session_name}:${tmux_main_window}" main-horizontal 2> /dev/null
+				;;
+				*) tmux select-layout -t "${session_name}:${tmux_main_window}" tiled 2> /dev/null ;;
+			esac
+			main_pane_id=$(tmux list-panes -t "${session_name}:${tmux_main_window}" -F '#{pane_id}|#{@ag_name}' 2> /dev/null | awk -F'|' -v mainname="${tmux_main_window}" '$2==mainname{print $1; exit}')
+			[ -n "${main_pane_id}" ] && tmux select-pane -t "${main_pane_id}" 2> /dev/null
+		}
+
+		function kill_tmux_pane_by_name() {
+			local pane_id
+			local pane_agname
+			while IFS='|' read -r pane_id pane_agname; do
+				[ "${pane_agname}" = "${1}" ] && tmux kill-pane -t "${pane_id}" 2> /dev/null
+			done < <(tmux list-panes -t "${session_name}:${tmux_main_window}" -F '#{pane_id}|#{@ag_name}' 2> /dev/null)
+			arrange_tmux_panes
+		}
+
+		function start_tmux_processes() {
+			local window_name="${1}"
+			local command_line="${2}"
+			local pane_color="${3}"
+			local new_pane_id
+			local main_pane_id
+			kill_tmux_pane_by_name "${window_name}"
+			main_pane_id=$(tmux list-panes -t "${session_name}:${tmux_main_window}" -F '#{pane_id}|#{@ag_name}' 2> /dev/null | awk -F'|' -v mainname="${tmux_main_window}" '$2==mainname{print $1; exit}')
+			[ -z "${main_pane_id}" ] && main_pane_id="${session_name}:${tmux_main_window}"
+			new_pane_id=$(tmux split-window -d -P -F '#{pane_id}' -t "${main_pane_id}" 2> /dev/null)
+			[ -z "${new_pane_id}" ] && return 0
+			tmux set -p -t "${new_pane_id}" @ag_name "${window_name}" 2> /dev/null
+			tmux select-pane -t "${new_pane_id}" -T "${window_name}" 2> /dev/null
+			if [ -n "${pane_color}" ]; then
+				tmux select-pane -t "${new_pane_id}" -P "bg=#000000,fg=${pane_color}" 2> /dev/null
+			else
+				tmux select-pane -t "${new_pane_id}" -P "bg=#000000" 2> /dev/null
+			fi
+			tmux send-keys -t "${new_pane_id}" "${command_line}" ENTER
+			arrange_tmux_panes
+		}
+
+		function kill_tmux_windows() {
+			local pane_id
+			local pane_agname
+			while IFS='|' read -r pane_id pane_agname; do
+				[ "${pane_agname}" = "${tmux_main_window}" ] && continue
+				[ -n "${1}" ] && [ "${pane_agname}" = "${1}" ] && continue
+				tmux kill-pane -t "${pane_id}" 2> /dev/null
+			done < <(tmux list-panes -t "${session_name}:${tmux_main_window}" -F '#{pane_id}|#{@ag_name}' 2> /dev/null)
+			arrange_tmux_panes
+		}
+
+		function kill_tmux_window_by_name() {
+			kill_tmux_pane_by_name "${1}"
+		}
+	AGEOF
+}
+
+#Start supporting scripts inside its own tmux window (or pane when tmux panes mode is active)
 function start_tmux_processes() {
 
 	debug_print
@@ -19570,6 +19760,29 @@ function start_tmux_processes() {
 
 	window_name="${1}"
 	command_line="${2}"
+
+	if tmux_panes_active; then
+		local new_pane_id
+		local main_pane_id
+		kill_tmux_pane_by_name "${window_name}"
+		main_pane_id=$(tmux list-panes -t "${session_name}:${tmux_main_window}" -F '#{pane_id}|#{@ag_name}' 2> /dev/null | awk -F'|' -v mainname="${tmux_main_window}" '$2==mainname{print $1; exit}')
+		if [ -z "${main_pane_id}" ]; then
+			main_pane_id="${session_name}:${tmux_main_window}"
+		fi
+		new_pane_id=$(tmux split-window -d -P -F '#{pane_id}' -t "${main_pane_id}" 2> /dev/null)
+		if [ -n "${new_pane_id}" ]; then
+			tmux set -p -t "${new_pane_id}" @ag_name "${window_name}" 2> /dev/null
+			tmux select-pane -t "${new_pane_id}" -T "${window_name}" 2> /dev/null
+			if [ -n "${3}" ]; then
+				tmux select-pane -t "${new_pane_id}" -P "bg=#000000,fg=${3}" 2> /dev/null
+			else
+				tmux select-pane -t "${new_pane_id}" -P "bg=#000000" 2> /dev/null
+			fi
+			tmux send-keys -t "${new_pane_id}" "${command_line}" ENTER
+			arrange_tmux_panes
+		fi
+		return 0
+	fi
 
 	tmux kill-window -t "${session_name}:${window_name}" 2> /dev/null
 	case "${4}" in
@@ -19626,6 +19839,22 @@ function kill_tmux_windows() {
 
 	debug_print
 
+	if tmux_panes_active; then
+		local pane_id
+		local pane_agname
+		while IFS='|' read -r pane_id pane_agname; do
+			if [ "${pane_agname}" = "${tmux_main_window}" ]; then
+				continue
+			fi
+			if [ -n "${1}" ] && [ "${pane_agname}" = "${1}" ]; then
+				continue
+			fi
+			tmux kill-pane -t "${pane_id}" 2> /dev/null
+		done < <(tmux list-panes -t "${session_name}:${tmux_main_window}" -F '#{pane_id}|#{@ag_name}' 2> /dev/null)
+		arrange_tmux_panes
+		return 0
+	fi
+
 	local TMUX_WINDOWS_LIST=()
 	local current_window_name
 	readarray -t TMUX_WINDOWS_LIST < <(tmux list-windows -t "${session_name}:")
@@ -19681,7 +19910,11 @@ function wait_for_process() {
 	done
 
 	if [ "${AIRGEDDON_WINDOWS_HANDLING}" = "tmux" ]; then
-		tmux kill-window -t "${session_name}:${2}"
+		if tmux_panes_active; then
+			kill_tmux_pane_by_name "${2}"
+		else
+			tmux kill-window -t "${session_name}:${2}"
+		fi
 	fi
 
 	if [ "${process_aborted}" -eq 1 ]; then
